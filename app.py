@@ -104,13 +104,17 @@ def media_bookings():
 @app.route("/purchase-orders", methods=["GET", "POST"])
 def purchase_orders():
     if request.method == "POST":
-        form = request.form
+        if request.is_json:
+            form = request.get_json()
+        else:
+            form = request.form
+        
 
         po_number = form.get("po_number")
 
         # If PO number is empty, generate one
         if not po_number:
-            po_number = f"PO-{int(datetime.utcnow().timestamp())}"
+            flash("PO Number/fields missing.", "danger")
 
         # --- DUPLICATE CHECK (OPTION B) ---
         existing = PurchaseOrder.query.filter_by(po_number=po_number).first()
