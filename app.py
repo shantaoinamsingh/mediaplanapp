@@ -313,6 +313,7 @@ def api_create_po():
     }), 201
 
 
+
 @app.route("/api/purchase-orders/<int:po_id>", methods=["GET"])
 def api_get_po(po_id):
     po = PurchaseOrder.query.get_or_404(po_id)
@@ -400,6 +401,27 @@ def send_invoice(inv_id):
     flash(f"Invoice {inv.invoice_number} sent for validation.", "success")
     return redirect(url_for("invoices"))
 
+@app.route("/api/bookings/<int:booking_id>/has-po", methods=["GET"])
+def api_booking_has_po(booking_id):
+    booking = MediaBooking.query.get_or_404(booking_id)
+
+    pos = PurchaseOrder.query.filter_by(booking_id=booking_id).all()
+
+    return jsonify({
+        "booking_id": booking_id,
+        "has_po": len(pos) > 0,
+        "po_count": len(pos),
+        "purchase_orders": [
+            {
+                "id": po.id,
+                "po_number": po.po_number,
+                "status": po.status,
+                "amount": po.total_amount,
+                "created_at": po.created_at.isoformat()
+            }
+            for po in pos
+        ]
+    })
 
 # -------------------------------------------------------
 # MAIN ENTRY (Flask 3 compatible)
