@@ -13,6 +13,22 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
 
 # -------------------------------------------------------
+# HELPER FUNCTION: Unified Data Extractor
+# -------------------------------------------------------
+
+def get_request_data():
+    """
+    Returns JSON body if request is JSON,
+    otherwise returns form data as a dict.
+    """
+    if request.is_json:
+        return request.get_json() or {}
+    else:
+        # request.form is ImmutableMultiDict; convert to plain dict
+        return request.form.to_dict() if request.form else {}
+
+
+# -------------------------------------------------------
 # MODELS
 # -------------------------------------------------------
 
@@ -61,6 +77,7 @@ class Invoice(db.Model):
     booking = db.relationship("MediaBooking", backref="invoices")
     po = db.relationship("PurchaseOrder", backref="invoices")
 
+
 # -------------------------------------------------------
 # ROUTES (UI PAGES)
 # -------------------------------------------------------
@@ -78,7 +95,8 @@ def index():
 @app.route("/media-bookings", methods=["GET", "POST"])
 def media_bookings():
     if request.method == "POST":
-        form = request.form
+        form = get_request_data()
+
         booking = MediaBooking(
             campaign_name=form.get("campaign_name"),
             channel=form.get("channel"),
@@ -94,6 +112,14 @@ def media_bookings():
         )
         db.session.add(booking)
         db.session.commit()
+
+        if request.is_json:
+            return jsonify({
+                "id": booking.id,
+                "status": booking.status,
+                "message": "Media booking created"
+            }), 201
+
         flash("Media booking created successfully.", "success")
         return redirect(url_for("media_bookings"))
 
@@ -104,36 +130,54 @@ def media_bookings():
 @app.route("/purchase-orders", methods=["GET", "POST"])
 def purchase_orders():
     if request.method == "POST":
-        if request.is_json:
-            form = request.get_json()
-        else:
-            form = request.form
-        
+        form = get_request_data()
 
         po_number = form.get("po_number")
+        vendor = form.get("vendor")
 
-        # If PO number is empty, generate one
+        # --- VALIDATION: PO number required (Option B) ---
         if not po_number:
-            flash("PO Number/fields missing.", "danger")
+            if request.is_json:
+                return jsonify({"error": "po_number is required"}), 400
+            flash("PO Number is required.", "danger")
+            return redirect(url_for("purchase_orders"))
 
-        # --- DUPLICATE CHECK (OPTION B) ---
+        # Vendor is mandatory because DB has nullable=False
+        if not vendor:
+            if request.is_json:
+                return jsonify({"error": "vendor is required"}), 400
+            flash("Vendor is required.", "danger")
+            return redirect(url_for("purchase_orders"))
+
+        # --- DUPLICATE CHECK ---
         existing = PurchaseOrder.query.filter_by(po_number=po_number).first()
         if existing:
+            if request.is_json:
+                return jsonify({"error": "PO number already exists"}), 409
             flash("PO Number already exists. Please enter a different value.", "danger")
             return redirect(url_for("purchase_orders"))
 
         # Create PO
         po = PurchaseOrder(
             po_number=po_number,
-            vendor=form.get("vendor"),
+            vendor=vendor,
             booking_id=int(form.get("booking_id") or 0),
             total_amount=float(form.get("total_amount") or 0),
             currency=form.get("currency") or "USD",
             status=form.get("status") or "CREATED"
         )
-        
+
         db.session.add(po)
         db.session.commit()
+
+        if request.is_json:
+            return jsonify({
+                "id": po.id,
+                "po_number": po.po_number,
+                "status": po.status,
+                "message": "Purchase order created"
+            }), 201
+
         flash("Purchase order created successfully.", "success")
         return redirect(url_for("purchase_orders"))
 
@@ -142,11 +186,11 @@ def purchase_orders():
     return render_template("purchase_orders.html", pos=pos, bookings=bookings)
 
 
-
 @app.route("/invoices", methods=["GET", "POST"])
 def invoices():
     if request.method == "POST":
-        form = request.form
+        form = get_request_data()
+
         inv = Invoice(
             invoice_number=form.get("invoice_number"),
             vendor=form.get("vendor"),
@@ -160,6 +204,14 @@ def invoices():
         )
         db.session.add(inv)
         db.session.commit()
+
+        if request.is_json:
+            return jsonify({
+                "id": inv.id,
+                "status": inv.status,
+                "message": "Invoice created"
+            }), 201
+
         flash("Invoice created successfully.", "success")
         return redirect(url_for("invoices"))
 
@@ -168,6 +220,7 @@ def invoices():
     pos = PurchaseOrder.query.all()
     return render_template("invoices.html", invoices=invoices, bookings=bookings, pos=pos)
 
+
 # -------------------------------------------------------
 # JSON API ENDPOINTS (for UiPath)
 # -------------------------------------------------------
@@ -175,6 +228,7 @@ def invoices():
 @app.route("/api/media-bookings", methods=["POST"])
 def api_create_booking():
     data = request.get_json() or {}
+
     booking = MediaBooking(
         campaign_name=data.get("campaign_name"),
         channel=data.get("channel"),
@@ -216,7 +270,7 @@ def api_get_booking(booking_id):
 def api_create_po():
     data = request.get_json() or {}
 
-    # booking_id is mandatory
+    # booking_id is mandatory for this API
     if not data.get("booking_id"):
         return jsonify({"error": "booking_id is required"}), 400
 
@@ -225,20 +279,22 @@ def api_create_po():
     if not booking:
         return jsonify({"error": "Invalid booking_id"}), 404
 
-    # If PO number is provided, validate uniqueness
+    # PO number logic (API can still auto-generate if not provided)
     po_number = data.get("po_number")
     if po_number:
         existing = PurchaseOrder.query.filter_by(po_number=po_number).first()
         if existing:
             return jsonify({"error": "PO number already exists"}), 409
     else:
-        # Auto-generate PO if not included
         po_number = f"PO-{int(datetime.utcnow().timestamp())}"
 
-    # Create new PO
+    vendor = data.get("vendor") or booking.vendor
+    if not vendor:
+        return jsonify({"error": "vendor is required"}), 400
+
     po = PurchaseOrder(
         po_number=po_number,
-        vendor=data.get("vendor") or booking.vendor,
+        vendor=vendor,
         booking_id=int(data.get("booking_id")),
         total_amount=float(data.get("total_amount") or 0),
         currency=data.get("currency") or "USD",
@@ -255,7 +311,6 @@ def api_create_po():
         "status": po.status,
         "message": "PO created successfully"
     }), 201
-
 
 
 @app.route("/api/purchase-orders/<int:po_id>", methods=["GET"])
@@ -326,6 +381,7 @@ def api_flag_invoice(inv_id):
     inv.comments = (inv.comments or "") + "\nFLAG: " + reason
     db.session.commit()
     return jsonify({"message": "Invoice flagged", "status": inv.status})
+
 
 @app.route("/send-invoice/<int:inv_id>", methods=["POST"])
 def send_invoice(inv_id):
