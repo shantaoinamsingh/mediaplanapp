@@ -439,6 +439,28 @@ def api_booking_has_po(booking_id):
             for po in pos
         ]
     })
+@app.route("/api/media-bookings/all", methods=["GET"])
+def api_get_all_bookings():
+    bookings = MediaBooking.query.order_by(MediaBooking.created_at.desc()).all()
+
+    return jsonify([
+        {
+            "id": b.id,
+            "campaign_name": b.campaign_name,
+            "channel": b.channel,
+            "market": b.market,
+            "vendor": b.vendor,
+            "start_date": b.start_date,
+            "end_date": b.end_date,
+            "unit_rate": b.unit_rate,
+            "units": b.units,
+            "budget": b.budget,
+            "currency": b.currency,
+            "status": b.status,
+            "created_at": b.created_at.isoformat()
+        }
+        for b in bookings
+    ])
 
 # -------------------------------------------------------
 # MAIN ENTRY (Flask 3 compatible)
