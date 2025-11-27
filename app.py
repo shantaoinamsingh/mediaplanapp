@@ -205,6 +205,14 @@ def invoices():
         db.session.add(inv)
         db.session.commit()
 
+        # ----- UPDATE PO STATUS TO INVOICED -----
+        if inv.po_id:
+            po = PurchaseOrder.query.get(inv.po_id)
+            if po:
+                po.status = "INVOICED"
+                db.session.commit()
+
+
         if request.is_json:
             return jsonify({
                 "id": inv.id,
@@ -344,7 +352,16 @@ def api_create_invoice():
     )
     db.session.add(inv)
     db.session.commit()
+
+    # ----- UPDATE PO STATUS TO INVOICED -----
+    if inv.po_id:
+        po = PurchaseOrder.query.get(inv.po_id)
+        if po:
+            po.status = "INVOICED"
+            db.session.commit()
+
     return jsonify({"id": inv.id, "status": inv.status, "message": "Invoice created"}), 201
+
 
 
 @app.route("/api/invoices/<int:inv_id>", methods=["GET"])
@@ -394,7 +411,7 @@ def send_invoice(inv_id):
         return redirect(url_for("invoices"))
 
     # Mark invoice as ready for validation
-    inv.status = "READY_TO_VALIDATE"
+    inv.status = "APPROVED"
     inv.comments = (inv.comments or "") + "\nInvoice sent for validation."
     db.session.commit()
 
